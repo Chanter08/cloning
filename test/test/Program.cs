@@ -8,20 +8,82 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+
 using System.Threading.Tasks;
+using System.Timers;
 
 namespace test
 {
     class Program
     {
-        public static string connString = "";
+        public static string connString = "Data Source=GEORDEY\\SQLEXPRESS;Initial Catalog=thesis;Integrated Security=True";
+
+        /*Yet to 
+         * implement timer
+         * Buy api
+         * implement method to call all methods accordingly
+        */
+
         static void Main(string[] args)
         {
+            CheckDb();
+            Timer t = new System.Timers.Timer
+            {
+                Interval = 1000 * 60 * 60 * 2
+            };
 
+            t.Elapsed += new System.Timers.ElapsedEventHandler(Timer_Elapsed);
+            t.Start();
         }
 
+        private static void Timer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            CheckDb();
+        }
 
-        public static void extractOdds(DataTable dt)
+        public static void CheckDb()
+        {
+            DataTable OddFiles = new DataTable();
+            DataTable ResultFiles = new DataTable();
+            DataTable StandingFiles = new DataTable();
+            List<SqlParameter> SqlParams = new List<SqlParameter>();
+            DataTable dataTable = new DataTable();
+
+            dataTable = ExecuteProcedure("bet.checkFiles", SqlParams);
+
+            if (dataTable.Rows.Count == 0)
+            {
+                Console.WriteLine("No New Files Found");
+            }
+            else
+            {
+                foreach(DataRow r in dataTable.Rows)
+                {
+
+                    if(r["filePath"].ToString().Contains("Odds"))
+                    {
+                        OddFiles = dataTable.Clone();
+                        OddFiles.Rows.Add(r.ItemArray);
+                    }
+                    else if (r["filePath"].ToString().Contains("Results"))
+                    {
+                        ResultFiles = dataTable.Clone();
+                        ResultFiles.Rows.Add(r.ItemArray);
+                    }
+                    else if (r["filePath"].ToString().Contains("Standings"))
+                    {
+                        StandingFiles = dataTable.Clone();
+                        StandingFiles.Rows.Add(r.ItemArray);
+                    }
+                }
+
+                //ExtractOdds(OddFiles);
+                //ExtractResults(ResultFiles);
+                ExtractStandings(StandingFiles);
+            }
+        }
+
+        public static void ExtractOdds(DataTable dt)
         {
             foreach (DataRow dr in dt.Rows)
             {
@@ -35,7 +97,6 @@ namespace test
                 foreach(var match in matches)
                 {
                     string matchID = "";
-                    string query = "";
 
                     var teams = match.Value["participants"];
                     string team1 = teams[0].ToString();
@@ -62,17 +123,18 @@ namespace test
 
                     //Select Fixture Id Where home team is team 1, away team is team 2 & match date is equal to matchDate
 
-                        List<SqlParameter> SqlParams = new List<SqlParameter>();
+                    List<SqlParameter> SqlParams = new List<SqlParameter>
+                    {
+                        new SqlParameter("homeTeam", homeTeam),
+                        new SqlParameter("awayTeam", awayTeam),
+                        new SqlParameter("matchDate", matchDate),
+                    };
 
-                        SqlParams.Add(new SqlParameter("homeTeam", homeTeam));
-                        SqlParams.Add(new SqlParameter("awayTeam", awayTeam));
-                        SqlParams.Add(new SqlParameter("matchDate", matchDate));
+                    DataTable dataTable = new DataTable();
 
-                        DataTable dataTable = new DataTable();
+                        dataTable = ExecuteProcedure("bet.SearchForFixture", SqlParams);
 
-                        dataTable = ExecuteProcedure("SearchForFixture", SqlParams);
-
-                        if (dataTable.Rows[0] != null)
+                        if (dataTable.Rows.Count != 0)
                         {
                             matchID = dataTable.Rows[0]["fixtureId"].ToString();
                         }
@@ -80,16 +142,19 @@ namespace test
                         else
                         {
                             string id = Guid.NewGuid().ToString();
-                            SqlParams = new List<SqlParameter>();
-
-                            SqlParams.Add(new SqlParameter("fixtureId", matchID));
-                            SqlParams.Add(new SqlParameter("fixtureDate", matchDate));
-                            SqlParams.Add(new SqlParameter("homeTeam", homeTeam));
-                            SqlParams.Add(new SqlParameter("awayTeam", awayTeam));
+                            matchID = id;
+                            SqlParams = new List<SqlParameter>
+                            {
+                                new SqlParameter("fixtureId", id),
+                                new SqlParameter("fixtureDate", matchDate),
+                                new SqlParameter("homeTeam", homeTeam),
+                                new SqlParameter("awayTeam", awayTeam),
+                                new SqlParameter("sourceName",sourceName)
+                            };
 
                             dataTable = new DataTable();
 
-                            dataTable = ExecuteProcedure("InsertFixture", SqlParams);
+                            dataTable = ExecuteProcedure("bet.InsertFixture", SqlParams);
                         }
 
                     JObject bookies = (JObject)jo["data"]["events"][match.Key]["sites"];
@@ -125,39 +190,44 @@ namespace test
                                         direction = "1";
                                         break;
                                     case 2:
-                                        direction = "x";
+                                        direction = "X";
                                         break;
                                 }
 
                                 val = Convert.ToDouble(odd);
 
-                                DataTable d = new DataTable();
+                                DataTable insertBet = new DataTable();
 
-                                List<SqlParameter> sqlParams = new List<SqlParameter>();
+                                List<SqlParameter> sqlParams = new List<SqlParameter>
+                                {
+                                    new SqlParameter("lastUpdated", lastUpdate),
+                                    new SqlParameter("oddValue", val),
+                                    new SqlParameter("direction", direction),
+                                    new SqlParameter("fixtureId", matchID),
+                                    new SqlParameter("bookie", b)
+                                };
 
-                                sqlParams.Add(new SqlParameter("lastUpdated", lastUpdate));
-                                sqlParams.Add(new SqlParameter("oddValue", val));
-                                sqlParams.Add(new SqlParameter("direction", direction));
-                                sqlParams.Add(new SqlParameter("fixtureId", matchID));
-                                sqlParams.Add(new SqlParameter("bookie", b));
-
-                                d = ExecuteProcedure("InsertBet", sqlParams);
+                                insertBet = ExecuteProcedure("bet.InsertOdd", sqlParams);
+                                i++;
                             }
+                                
                         }
 
                     }
 
                     DataTable d = new DataTable();
 
-                    List<SqlParameter> sqlParameters = new List<SqlParameter>();
-                    sqlParameters.Add(new SqlParameter(("filepath"), dr["filePath"]));
+                    List<SqlParameter> sqlParameters = new List<SqlParameter>
+                    {
+                        new SqlParameter(("filepath"), dr["filePath"])
+                    };
 
-                    d = ExecuteProcedure("UpdateFile", sqlParameters);
+                    d = ExecuteProcedure("bet.updateOddDocument", sqlParameters);
                 }
             }
-        }
+            }
 
-        public static void extractResults(DataTable dt)
+        public static void ExtractResults(DataTable dt)
         {
 
             foreach (DataRow dr in dt.Rows)
@@ -170,60 +240,66 @@ namespace test
 
                 foreach (var x in match)
                 {
-                    var homeTeam = x["homeTeam"]["name"];
-                    var awayTeam = x["awayTeam"]["name"];
+                    string homeTeam = x["homeTeam"]["name"].ToString();
+                    string awayTeam = x["awayTeam"]["name"].ToString();
 
                     var scoreHome = x["score"]["fullTime"]["homeTeam"];
                     var scoreAway = x["score"]["fullTime"]["awayTeam"];
 
-                    string direction = "";
+                    char direction;
 
                     if(Convert.ToInt16(scoreHome) > Convert.ToInt16(scoreAway))
                     {
-                        direction = "1";
+                        direction = '1';
                     }
                     else if(Convert.ToInt16(scoreHome) < Convert.ToInt16(scoreAway))
                     {
-                        direction = "2";
+                        direction = '2';
                     }
                     else
                     {
-                        direction = "x";
+                        direction = 'X';
                     }
-
 
                     DateTime date = Convert.ToDateTime(x["utcDate"]);
 
                     //Select Id of match with corresponding date time, home and away team and insert result
-                    List<SqlParameter> sqlParameters = new List<SqlParameter>();
-
-                    sqlParameters.Add(new SqlParameter("homeTeam", homeTeam));
-                    sqlParameters.Add(new SqlParameter("awayTeam", awayTeam));
-                    sqlParameters.Add(new SqlParameter("date", date));
+                    List<SqlParameter> sqlParameters = new List<SqlParameter>
+                    {
+                        new SqlParameter("homeTeam", homeTeam),
+                        new SqlParameter("awayTeam", awayTeam),
+                        new SqlParameter("date", date)
+                    };
 
                     DataTable results = new DataTable();
 
-                    results = ExecuteProcedure("SearchForFixture",sqlParameters);
+                    results = ExecuteProcedure("bet.searchFixtureForResult", sqlParameters);
 
-                    if (results.Rows[0] != null)
+                    if (results.Rows.Count != 0)
                     {
                         string matchID = results.Rows[0]["fixtureId"].ToString();
 
                         results = new DataTable();
                         sqlParameters.Clear();
+                        sqlParameters.Add(new SqlParameter("matchId", matchID));
+                        sqlParameters.Add(new SqlParameter("homeScore", Convert.ToInt16(scoreHome)));
+                        sqlParameters.Add(new SqlParameter("awayScore", Convert.ToInt16(scoreAway)));
+                        sqlParameters.Add(new SqlParameter("result", direction));
 
-                        sqlParameters.Add(new SqlParameter("homeScore", scoreHome));
-                        sqlParameters.Add(new SqlParameter("awayScore", scoreAway));
-                        sqlParameters.Add(new SqlParameter("direction", direction));
-
-                        results = ExecuteProcedure("InsertResult", sqlParameters);
+                        results = ExecuteProcedure("bet.InsertResult", sqlParameters);
                     }
-
                 }
+
+                List<SqlParameter> sqlParams = new List<SqlParameter>
+                {
+                    new SqlParameter("filePath", dr["filePath"])
+                };
+
+                ExecuteProcedure("bet.updateResultsDocument", sqlParams);
             }            
         }
 
-        public static void extractStandings(DataTable dt)
+        public static void ExtractStandings(DataTable dt)
         {
             foreach (DataRow dr in dt.Rows)
             {
@@ -236,7 +312,8 @@ namespace test
                 foreach (var x in content)
                 {
                     var position = x["position"];
-                    var team = x["team"]["name"];
+                    var playedGames = x["playedGames"];
+                    string team = x["team"]["name"].ToString();
                     var wins = x["won"];
                     var draw = x["draw"];
                     var lost = x["lost"];
@@ -245,14 +322,36 @@ namespace test
                     var ga = x["goalsAgainst"];
                     var gd = x["goalDifference"];
 
-
+                    if (team.Contains("&"))
+                    {
+                        team = team.Replace("&", "and");
+                    }
                     DataTable data = new DataTable();
-                    List<SqlParameter> sqlParameters = new List<SqlParameter>();
+                    List<SqlParameter> sqlParameters = new List<SqlParameter>
+                    {
+                        new SqlParameter("position",Convert.ToInt16(position)),
+                        new SqlParameter("week",Convert.ToInt16(playedGames)),
+                        new SqlParameter("team",team),
+                        new SqlParameter("won",Convert.ToInt16(wins)),
+                        new SqlParameter("draw",Convert.ToInt16(draw)),
+                        new SqlParameter("lost",Convert.ToInt16(lost)),
+                        new SqlParameter("points",Convert.ToInt16(points)),
+                        new SqlParameter("gf",Convert.ToInt16(gf)),
+                        new SqlParameter("ga",Convert.ToInt16(ga)),
+                        new SqlParameter("gd",Convert.ToInt16(gd))
+                    };
 
 
-                    sqlParameters.Add(new SqlParameter("position", position));
-                    //Insert into db
+                    DataTable results = new DataTable();
+                    results = ExecuteProcedure("bet.InsertStanding", sqlParameters);
                 }
+
+                List<SqlParameter> sqlParams = new List<SqlParameter>
+                {
+                    new SqlParameter("filePath", dr["filePath"])
+                };
+
+                ExecuteProcedure("bet.updateStandingsDocument", sqlParams);
             }
         }
 
@@ -272,8 +371,10 @@ namespace test
 
             conn.Open();
 
-            SqlCommand command = new SqlCommand(procName, conn);
-            command.CommandType = System.Data.CommandType.StoredProcedure;
+            SqlCommand command = new SqlCommand(procName, conn)
+            {
+                CommandType = System.Data.CommandType.StoredProcedure
+            };
 
             if (sqlParams != null)
             {
